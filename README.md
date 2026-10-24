@@ -19,7 +19,7 @@ The same key and payload replay the original result. Conflicting payloads or a n
 
 ## Limits of this foundation
 
-State disappears on restart or reload. Run **one worker only**: the lock serializes threads in one process, not multiple servers. There is no database transaction or durable exactly-once guarantee. Only committed operations are stored; denied attempts are not yet an operation history. No run isolation API, fault injector, unknown/pending state machine, recovery, LangGraph, LLM, frontend, benchmark or production authentication exists yet. Seeded approval IDs are test fixtures, not secrets or real user authorization. Use loopback only.
+State disappears on restart or reload. Run **one worker only**: the lock serializes threads in one process, not multiple servers. There is no database transaction or durable exactly-once guarantee. Only committed operations are stored; denied attempts are not yet an operation history. A single deterministic response-loss wrapper and scripted reconciliation flow exist. No run isolation API, general fault engine, persistent recovery, LangGraph, LLM, frontend, benchmark or production authentication exists yet. Seeded approval IDs are test fixtures, not secrets or real user authorization. Use loopback only.
 
 Tests examine the ledger rather than trusting a success message. They cover validation, authorization, replay, conflicts, instance isolation, concurrent replays and competing refunds exceeding the capture. These are in-process tests, not crash-recovery tests.
 
@@ -74,6 +74,21 @@ Tested on Windows with Python 3.10.0. `requirements-dev.txt` records the exact d
 
 Known dependency warning: the installed Starlette TestClient deprecates its HTTPX compatibility path. Tests currently pass with the pinned HTTPX version. The warning is intentionally visible; a future dependency update should migrate the test transport and rerun the suite.
 
-Next small milestone: a deterministic after-commit response failure, then status reconciliation using the same operation key. Persistence and actual process-kill recovery come later.
+Next suggested milestone: make the scenario result and event records structured enough for repeatable evaluation. Persistence and actual process-kill recovery come later.
 
 References used for the foundation: [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), [Pydantic strict mode](https://docs.pydantic.dev/latest/concepts/strict_mode/) and [FastAPI server startup](https://fastapi.tiangolo.com/deployment/manually/).
+
+## Response lost after commit scenario
+
+Run this in PowerShell from the repository root (no server required):
+
+```powershell
+$env:PYTHONPATH = 'src'
+.\.venv\Scripts\python.exe -m agent_transaction_lab.scenario
+```
+
+The script prints the unknown-outcome event, the reconciled operation, the actual ledger and `ledger_assertions=PASS`. Expected counts: one refund attempt, one status query, one effect of 2500 and 7500 remaining.
+
+`scenario.py` wraps the existing service in a sequential in-process transport. On its first successful refund call, it lets the service record the effect and then raises a simulated timeout instead of delivering the result. A scripted controller catches that timeout, marks the outcome unknown and queries the original operation key once. It never sends a second refund. A failed or mismatched status query stays unknown; it never creates a new key. Replaying the same key is separately tested to preserve one effect.
+
+The wrapper is deterministic: each new instance hides its first successful response, with no timing sleeps or random faults. Rejected requests do not consume the fault. This is an exception-based simulation of response loss, not a dropped network packet, real timeout, process kill, agent or restart-recovery demonstration. The HTTP API is unchanged. The wrapper is for sequential scenario execution; the underlying service's existing thread tests remain in place.
