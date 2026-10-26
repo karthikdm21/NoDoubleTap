@@ -1,6 +1,6 @@
-# Agent Transaction Lab
+# No Double Tap
 
-A local learning project for testing simulated transaction behavior. No real money or customer accounts are used.
+Agent Transaction Lab: a local learning project for testing simulated transaction behavior. No real money or customer accounts are used.
 
 ## Current scope
 
