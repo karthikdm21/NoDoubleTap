@@ -34,39 +34,89 @@ class ResponseLossTransport:
         return self.service.operation(key)
 
 
+class ScenarioEvent(BaseModel):
+    """Allowlisted evidence: no request bodies, exception text or credentials."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    sequence: int
+    kind: Literal[
+        "refund_attempt",
+        "response_lost",
+        "status_query",
+        "status_unresolved",
+        "status_mismatch",
+        "status_reconciled",
+        "refund_acknowledged",
+        "final_outcome",
+    ]
+    attempt: int = 1
+    outcome: Literal["unknown", "committed"] = "unknown"
+
+
 class Reconciliation(BaseModel):
     model_config = ConfigDict(frozen=True)
     outcome: Literal["committed", "unknown"]
     operation: Operation | None
     events: tuple[str, ...]
+    evidence: tuple[ScenarioEvent, ...] = ()
 
 
 def reconcile_refund(
     transport: ResponseLossTransport, key: str, request: RefundRequest
 ) -> Reconciliation:
     """Send once, query once after response loss. Never create a replacement key."""
+    evidence = [ScenarioEvent(sequence=1, kind="refund_attempt")]
+
+    def finish(
+        outcome: Literal["committed", "unknown"],
+        operation: Operation | None,
+        events: tuple[str, ...],
+        kind: Literal[
+            "status_unresolved", "status_mismatch", "status_reconciled", "refund_acknowledged"
+        ],
+    ) -> Reconciliation:
+        evidence.append(ScenarioEvent(sequence=len(evidence) + 1, kind=kind, outcome=outcome))
+        evidence.append(
+            ScenarioEvent(sequence=len(evidence) + 1, kind="final_outcome", outcome=outcome)
+        )
+        return Reconciliation(
+            outcome=outcome, operation=operation, events=events, evidence=tuple(evidence)
+        )
+
     try:
         result = transport.refund(key, request)
     except SimulatedResponseLost:
         events = ("refund_dispatched", "response_lost_outcome_unknown")
+        evidence.append(ScenarioEvent(sequence=2, kind="response_lost"))
+        evidence.append(ScenarioEvent(sequence=3, kind="status_query"))
         try:
             result = transport.operation(key)
         except (TimeoutError, ServiceError):
-            return Reconciliation(
-                outcome="unknown", operation=None, events=(*events, "status_unresolved")
-            )
+            return finish("unknown", None, (*events, "status_unresolved"), "status_unresolved")
         # Bind the status result to this exact intent, not merely a success label.
         if result.operation_key != key or result.effect.request != request:
-            return Reconciliation(
-                outcome="unknown", operation=None, events=(*events, "status_mismatch")
-            )
-        return Reconciliation(
-            outcome="committed", operation=result, events=(*events, "status_reconciled")
-        )
-    return Reconciliation(outcome="committed", operation=result, events=("refund_acknowledged",))
+            return finish("unknown", None, (*events, "status_mismatch"), "status_mismatch")
+        return finish("committed", result, (*events, "status_reconciled"), "status_reconciled")
+    return finish("committed", result, ("refund_acknowledged",), "refund_acknowledged")
 
 
-def main() -> None:
+class ScenarioReport(BaseModel):
+    """Versioned evidence for one fixed demo; not a durable run store."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: Literal[1] = 1
+    scenario_id: Literal["lost_response_after_commit_v1"] = "lost_response_after_commit_v1"
+    outcome: Literal["committed", "unknown"]
+    evidence: tuple[ScenarioEvent, ...]
+    refund_attempts: int
+    status_queries: int
+    ledger_effect_count: int
+    refunded_minor: int
+    remaining_minor: int
+    ledger_assertions_passed: bool
+
+
+def run_demo() -> ScenarioReport:
     """Print deterministic evidence; use the ledger as the independent oracle."""
     service = seeded_service()
     transport = ResponseLossTransport(service)
@@ -86,11 +136,22 @@ def main() -> None:
         and ledger.remaining_minor == 7500
         and ledger.effects[0].operation_key == "op_demo_001"
     )
-    print(result.model_dump_json(indent=2))
-    print(ledger.model_dump_json(indent=2))
-    print(f"refund_attempts={transport.refund_attempts} status_queries={transport.status_queries}")
-    print(f"ledger_assertions={'PASS' if passed else 'FAIL'}")
-    if not passed:
+    return ScenarioReport(
+        outcome=result.outcome,
+        evidence=result.evidence,
+        refund_attempts=transport.refund_attempts,
+        status_queries=transport.status_queries,
+        ledger_effect_count=len(ledger.effects),
+        refunded_minor=ledger.refunded_minor,
+        remaining_minor=ledger.remaining_minor,
+        ledger_assertions_passed=passed,
+    )
+
+
+def main() -> None:
+    report = run_demo()
+    print(report.model_dump_json(indent=2))
+    if not report.ledger_assertions_passed:
         raise SystemExit(1)
 
 

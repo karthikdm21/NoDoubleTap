@@ -93,3 +93,84 @@ def test_each_new_transport_reproduces_failure():
         transport = ResponseLossTransport(seeded_service())
         with pytest.raises(SimulatedResponseLost):
             transport.refund("stable_key", request())
+
+
+def test_structured_report_is_deterministic_and_has_ordered_safe_evidence(capsys):
+    import json
+
+    from agent_transaction_lab.scenario import main, run_demo
+
+    first = run_demo()
+    assert first == run_demo()
+    assert [event.sequence for event in first.evidence] == [1, 2, 3, 4, 5]
+    assert [event.kind for event in first.evidence] == [
+        "refund_attempt",
+        "response_lost",
+        "status_query",
+        "status_reconciled",
+        "final_outcome",
+    ]
+    assert [event.outcome for event in first.evidence] == [
+        "unknown",
+        "unknown",
+        "unknown",
+        "committed",
+        "committed",
+    ]
+    assert first.ledger_effect_count == 1
+    assert (first.refunded_minor, first.remaining_minor) == (2500, 7500)
+    assert first.refund_attempts == first.status_queries == 1
+    assert first.ledger_assertions_passed
+    main()
+    exported = json.loads(capsys.readouterr().out)
+    assert exported == json.loads(first.model_dump_json())
+    assert set(exported) == {
+        "schema_version",
+        "scenario_id",
+        "outcome",
+        "evidence",
+        "refund_attempts",
+        "status_queries",
+        "ledger_effect_count",
+        "refunded_minor",
+        "remaining_minor",
+        "ledger_assertions_passed",
+    }
+    assert all(
+        set(event) == {"sequence", "kind", "attempt", "outcome"} for event in exported["evidence"]
+    )
+
+
+@pytest.mark.parametrize("mode", ["timeout", "missing", "wrong_key", "wrong_payload"])
+def test_unknown_evidence_never_claims_commit_or_leaks_error(mode):
+    class FaultyStatus(ResponseLossTransport):
+        def operation(self, key):
+            self.status_queries += 1
+            if mode == "timeout":
+                raise TimeoutError("secret-error-text")
+            if mode == "missing":
+                raise ServiceError(404, "secret-error-text")
+            result = self.service.operation(key)
+            if mode == "wrong_key":
+                return result.model_copy(update={"operation_key": "wrong"})
+            changed = request().model_copy(update={"approval_id": "secret-error-text"})
+            return result.model_copy(
+                update={"effect": result.effect.model_copy(update={"request": changed})}
+            )
+
+    service = seeded_service()
+    transport = FaultyStatus(service)
+    result = reconcile_refund(transport, "stable_key", request())
+    assert result.outcome == "unknown"
+    assert result.operation is None
+    assert [event.sequence for event in result.evidence] == [1, 2, 3, 4, 5]
+    assert [event.kind for event in result.evidence[:3]] == [
+        "refund_attempt",
+        "response_lost",
+        "status_query",
+    ]
+    assert result.evidence[-1].kind == "final_outcome"
+    assert all(event.outcome == "unknown" for event in result.evidence)
+    assert "secret-error-text" not in result.model_dump_json()
+    assert transport.refund_attempts == transport.status_queries == 1
+    assert len(service.ledger().effects) == 1

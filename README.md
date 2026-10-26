@@ -2,7 +2,7 @@
 
 A local learning project for testing simulated transaction behavior. No real money or customer accounts are used.
 
-## Day 1 starting point
+## Current scope
 
 Implemented: a FastAPI app factory, health endpoint, strict Pydantic contracts and a deterministic in-memory refund service. Amounts are integer minor units (10000 INR paise = INR 100). One seeded payment has a capture of 10000 and approval for one refund of 2500.
 
@@ -74,7 +74,7 @@ Tested on Windows with Python 3.10.0. `requirements-dev.txt` records the exact d
 
 Known dependency warning: the installed Starlette TestClient deprecates its HTTPX compatibility path. Tests currently pass with the pinned HTTPX version. The warning is intentionally visible; a future dependency update should migrate the test transport and rerun the suite.
 
-Next suggested milestone: make the scenario result and event records structured enough for repeatable evaluation. Persistence and actual process-kill recovery come later.
+Structured JSON result and ordered event evidence are now available for the fixed demo. Next suggested milestone: a second deterministic scenario using the same report schema. Persistence and actual process-kill recovery come later.
 
 References used for the foundation: [FastAPI testing](https://fastapi.tiangolo.com/tutorial/testing/), [Pydantic strict mode](https://docs.pydantic.dev/latest/concepts/strict_mode/) and [FastAPI server startup](https://fastapi.tiangolo.com/deployment/manually/).
 
@@ -87,8 +87,24 @@ $env:PYTHONPATH = 'src'
 .\.venv\Scripts\python.exe -m agent_transaction_lab.scenario
 ```
 
-The script prints the unknown-outcome event, the reconciled operation, the actual ledger and `ledger_assertions=PASS`. Expected counts: one refund attempt, one status query, one effect of 2500 and 7500 remaining.
+The script prints one valid, indented JSON document with schema_version 1, a fixed scenario identifier, final outcome, ordered evidence, call counts, ledger totals and ledger_assertions_passed. Expected counts: one refund attempt, one status query, one effect of 2500 and 7500 remaining.
 
 `scenario.py` wraps the existing service in a sequential in-process transport. On its first successful refund call, it lets the service record the effect and then raises a simulated timeout instead of delivering the result. A scripted controller catches that timeout, marks the outcome unknown and queries the original operation key once. It never sends a second refund. A failed or mismatched status query stays unknown; it never creates a new key. Replaying the same key is separately tested to preserve one effect.
 
 The wrapper is deterministic: each new instance hides its first successful response, with no timing sleeps or random faults. Rejected requests do not consume the fault. This is an exception-based simulation of response loss, not a dropped network packet, real timeout, process kill, agent or restart-recovery demonstration. The HTTP API is unchanged. The wrapper is for sequential scenario execution; the underlying service's existing thread tests remain in place.
+
+## Structured scenario evidence
+
+Each event has a sequence number, kind, logical attempt number and caller-known outcome. The normal order is `refund_attempt`, `response_lost`, `status_query`, `status_reconciled`, `final_outcome`. The outcome stays unknown through the query. Unavailable or mismatched status ends in unknown with a corresponding evidence event. The legacy string events remain available to existing Python callers.
+
+The report contains only selected summary fields: no request bodies, approval IDs, raw operation objects, environment variables or exception messages. Sequence numbers express order, not elapsed time. The fixed scenario identifier is not a globally unique run ID. This small demo has no durable event log or general run registry.
+
+Export the output to the already ignored local notes folder:
+
+```powershell
+$env:PYTHONPATH = 'src'
+.\.venv\Scripts\python.exe -m agent_transaction_lab.scenario | Set-Content -Encoding utf8 local-notes/scenario-result.json
+Get-Content -Raw local-notes/scenario-result.json | ConvertFrom-Json
+```
+
+The JSON file is evidence output only; it cannot restore service state. Repeating the fresh fixed demo produces the same report. Ledger assertions are separate from the controller outcome and do not establish production correctness.
