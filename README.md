@@ -1,4 +1,4 @@
-# No Double Tap
+# NoDoubleTap
 
 Agent Transaction Lab: a local learning project for testing simulated transaction behavior. No real money or customer accounts are used.
 
