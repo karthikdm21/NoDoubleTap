@@ -1,4 +1,4 @@
-"""HTTP entry point. Each app owns its own simulation state."""
+"""HTTP entry point. Default apps own independent in-memory simulation state."""
 
 from typing import Annotated
 
@@ -6,12 +6,13 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
 from agent_transaction_lab.models import LedgerSnapshot, Operation, RefundRequest
+from agent_transaction_lab.repository import TransactionRepository
 from agent_transaction_lab.service import ServiceError, seeded_service
 
 
-def create_app() -> FastAPI:
+def create_app(repository: TransactionRepository | None = None) -> FastAPI:
     app = FastAPI(title="Agent Transaction Lab", version="0.1.0")
-    service = seeded_service()
+    service: TransactionRepository = repository if repository is not None else seeded_service()
 
     @app.exception_handler(ServiceError)
     async def service_error(_request: Request, exc: ServiceError) -> JSONResponse:

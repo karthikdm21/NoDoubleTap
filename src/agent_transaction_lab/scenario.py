@@ -5,7 +5,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from agent_transaction_lab.models import Operation, RefundRequest
-from agent_transaction_lab.service import FakeTransactionService, ServiceError, seeded_service
+from agent_transaction_lab.repository import TransactionRepository
+from agent_transaction_lab.service import ServiceError, seeded_service
 
 
 class SimulatedResponseLost(TimeoutError):
@@ -15,7 +16,7 @@ class SimulatedResponseLost(TimeoutError):
 class ResponseLossTransport:
     """Hide the first successful refund response per instance; never alter the ledger."""
 
-    def __init__(self, service: FakeTransactionService) -> None:
+    def __init__(self, service: TransactionRepository) -> None:
         self.service = service
         self._lost = False
         self.refund_attempts = 0
