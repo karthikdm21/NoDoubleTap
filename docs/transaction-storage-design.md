@@ -1,8 +1,9 @@
 # Transaction storage design (foundation)
 
-Status: proposed PostgreSQL schema and migration contract; NOT an applied migration.
-The runnable backend is still in memory. No SQLAlchemy/Alembic/driver version is
-selected or installed by this step. No database, role, password or schema is created.
+Status updated 28 October: a candidate SQLAlchemy adapter, explicit seed function
+and Alembic revision now exist. The default API remains in memory. SQLAlchemy,
+Alembic and psycopg are installed/pinned in the project venv. No database, role,
+password or server schema has been created, and live integration is unverified.
 
 ## Implemented boundary
 
@@ -121,3 +122,56 @@ packaging remain subsequent original-scope requirements.
 
 Reviewed 27 October 2026. References explain the design; they do not select dependency
 versions or establish that this proposed database implementation has been tested.
+
+
+## Candidate implementation (28 October)
+
+`postgres.py` implements the repository boundary with one Engine transaction per
+call and an explicit UUID run/payment binding. `seed_run` persists approved
+intent/key bindings before service dispatch, refuses conflicting seed digests and
+never resets an existing run. This fixture seeding is not a durable orchestrator.
+The adapter locks intent then payment, conditionally updates balance and writes
+operation/effect together; returns only after commit. Driver failures become a
+sanitized 503 with explicit uncertainty. It never auto-seeds or falls back to memory.
+
+Revision `0001_transactions` defines six ndt_ tables in the dedicated database's
+public schema, immutable-binding triggers, exact approval/intent foreign keys,
+unique key/intent constraints, bounds checks and a deferred operation-to-effect
+foreign key. Fake order context is currently a payment order_id field; the separate
+order table and full run configuration/events remain future original-scope work.
+This is the first committed-only slice, not all planned statuses or tables.
+
+Generate SQL without a database connection (verified):
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head --sql
+.\.venv\Scripts\python.exe -m alembic downgrade 0001_transactions:base --sql
+```
+
+Online migrations deliberately require DATABASE_URL plus
+NODOUBLETAP_ALLOW_MIGRATIONS=1. The URL guard permits only postgresql+psycopg,
+loopback port 5432 and database nodoubletap_sim; query-string host overrides are
+refused. This prevents accidental targets, not a substitute for credentials or
+server authorization. No connection configuration is shipped. Do not run online
+migrations until the dedicated database and exact setup are approved.
+
+The four PostgreSQL tests need an already migrated dedicated database,
+NODOUBLETAP_TEST_DATABASE_URL and NODOUBLETAP_ALLOW_DB_TESTS=1. Without them they
+SKIP explicitly. They write only unique synthetic run IDs and leave those fixtures;
+there is no delete/reset command yet. Migrations/seed use the owner setup connection;
+the proposed runtime role must not be permitted to create approvals or tables.
+
+Offline tests check migration generation, connection-target guards, seed prevalidation,
+hash compatibility and commit-error sanitization with a test double. They do NOT
+prove PostgreSQL syntax/constraints, concurrent locks, rollback, crash safety or
+restart durability. Four opt-in tests are prepared for replay/reopen, competing
+refunds, key/payload/seed conflicts and database rollback. Additional direct mutation,
+cross-run and deferred-effect constraint tests remain due with live integration.
+Actual process-kill/checkpoint evidence remains a separate subsequent milestone.
+
+Runtime grant review must account for row locking: PostgreSQL requires UPDATE
+privilege on at least one column for SELECT FOR UPDATE/SHARE. The proposed narrow
+intent grant is UPDATE(operation_key), with its immutable trigger rejecting actual
+changes; payment UPDATE(refunded_minor) also permits its locks. These grants are
+not applied by the migration and need separate reviewed setup and role-level tests.
+See [PostgreSQL SELECT privileges](https://www.postgresql.org/docs/18/sql-select.html).
