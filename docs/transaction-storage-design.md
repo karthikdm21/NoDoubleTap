@@ -150,7 +150,7 @@ Generate SQL without a database connection (verified):
 
 Online migrations deliberately require DATABASE_URL plus
 NODOUBLETAP_ALLOW_MIGRATIONS=1. The URL guard permits only postgresql+psycopg,
-loopback port 5432 and database nodoubletap_sim; query-string host overrides are
+explicit IPv4 loopback 127.0.0.1 port 5433 and database nodoubletap_sim; query-string host overrides are
 refused. This prevents accidental targets, not a substitute for credentials or
 server authorization. No connection configuration is shipped. Do not run online
 migrations until the dedicated database and exact setup are approved.
@@ -175,3 +175,10 @@ intent grant is UPDATE(operation_key), with its immutable trigger rejecting actu
 changes; payment UPDATE(refunded_minor) also permits its locks. These grants are
 not applied by the migration and need separate reviewed setup and role-level tests.
 See [PostgreSQL SELECT privileges](https://www.postgresql.org/docs/18/sql-select.html).
+
+
+Setup alignment: the separate project cluster is now on 127.0.0.1:5433. The URL
+guard refuses the old 5432 port and omitted/default ports. Alembic also accepts an
+explicitly supplied authenticated connection under the existing online opt-in;
+this avoids persisting an administrator connection secret for a local handoff.
+Live acceptance remains pending until the focused database results are verified.

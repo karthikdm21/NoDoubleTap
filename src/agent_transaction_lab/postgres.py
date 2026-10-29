@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from pydantic import TypeAdapter
 from sqlalchemy import Connection, Engine, create_engine, text
-from sqlalchemy.engine import RowMapping, make_url
+from sqlalchemy.engine import URL, RowMapping, make_url
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from agent_transaction_lab.models import (
@@ -28,23 +28,31 @@ def payload_hash(request: RefundRequest) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def local_engine(url: str) -> Engine:
-    """Construct without connecting. Refuse an unintended database/driver/host."""
+def validate_local_url(url: str | URL) -> URL:
+    """Validate the exact project target without connecting or exposing credentials."""
     try:
         parsed = make_url(url)
         allowed = (
             parsed.drivername == "postgresql+psycopg"
-            and parsed.host in ("127.0.0.1", "localhost", "::1")
+            and parsed.host == "127.0.0.1"
             and parsed.database == "nodoubletap_sim"
-            and parsed.port in (None, 5432)
+            and parsed.port == 5433
             and not parsed.query
         )
     except Exception:
         raise ValueError("Invalid local simulation database configuration") from None
     if not allowed:
         raise ValueError("Only the dedicated local nodoubletap_sim database is supported")
+    return parsed
+
+
+def local_engine(url: str | URL) -> Engine:
+    """Construct lazily after validating the isolated project target."""
     return create_engine(
-        parsed, echo=False, hide_parameters=True, connect_args={"connect_timeout": 3}
+        validate_local_url(url),
+        echo=False,
+        hide_parameters=True,
+        connect_args={"connect_timeout": 3},
     )
 
 

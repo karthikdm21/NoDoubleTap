@@ -53,7 +53,8 @@ def test_online_migration_requires_separate_explicit_opt_in(monkeypatch):
         "sqlite://",
         "postgresql+psycopg://localhost/other_database",
         "postgresql+psycopg://remote.example/nodoubletap_sim",
-        "postgresql+psycopg://localhost:5433/nodoubletap_sim",
+        "postgresql+psycopg://127.0.0.1:5432/nodoubletap_sim",
+        "postgresql+psycopg://127.0.0.1/nodoubletap_sim",
         "postgresql+psycopg://localhost/nodoubletap_sim?host=remote.example",
     ],
 )
@@ -64,7 +65,7 @@ def test_wrong_connection_targets_are_refused_without_connecting(url):
 
 
 def test_valid_engine_construction_is_lazy():
-    engine = local_engine("postgresql+psycopg://localhost:5432/nodoubletap_sim")
+    engine = local_engine("postgresql+psycopg://127.0.0.1:5433/nodoubletap_sim")
     assert engine.dialect.name == "postgresql"
     engine.dispose()
 
@@ -107,3 +108,16 @@ def test_unapproved_seed_is_rejected_before_database_access():
     with pytest.raises(ValueError, match="exact approved"):
         seed_run(engine, uuid4(), payment, (), {"original_key": request()})
     engine.begin.assert_not_called()
+
+
+def test_supplied_migration_connection_cannot_target_the_old_cluster(monkeypatch):
+    from sqlalchemy.engine import make_url
+
+    monkeypatch.setenv("NODOUBLETAP_ALLOW_MIGRATIONS", "1")
+    cfg, _ = config()
+    connection = MagicMock()
+    connection.engine.url = make_url("postgresql+psycopg://127.0.0.1:5432/nodoubletap_sim")
+    cfg.attributes["connection"] = connection
+    with pytest.raises(ValueError, match="dedicated local"):
+        command.upgrade(cfg, "head")
+    connection.execute.assert_not_called()
