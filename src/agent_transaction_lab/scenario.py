@@ -45,6 +45,8 @@ class ScenarioEvent(BaseModel):
         "response_lost",
         "status_query",
         "status_unresolved",
+        "status_not_found",
+        "retry_exhausted",
         "status_mismatch",
         "status_reconciled",
         "refund_acknowledged",
@@ -102,11 +104,13 @@ def reconcile_refund(
 
 
 class ScenarioReport(BaseModel):
-    """Versioned evidence for one fixed demo; not a durable run store."""
+    """Versioned fixed-demo evidence; not a durable run store."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal[1] = 1
-    scenario_id: Literal["lost_response_after_commit_v1"] = "lost_response_after_commit_v1"
+    scenario_id: Literal["lost_response_after_commit_v1", "timeout_before_execution_v1"] = (
+        "lost_response_after_commit_v1"
+    )
     outcome: Literal["committed", "unknown"]
     evidence: tuple[ScenarioEvent, ...]
     refund_attempts: int
